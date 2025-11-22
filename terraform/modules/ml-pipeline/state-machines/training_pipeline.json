@@ -1,0 +1,189 @@
+{
+  "Comment": "ML Training and Deployment Pipeline",
+  "StartAt": "ValidateData",
+  "States": {
+    "ValidateData": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:validate-training-data",
+      "Next": "DataQualityCheck",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "Next": "NotifyFailure"
+      }]
+    },
+    "DataQualityCheck": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:data-quality-check",
+      "Next": "CheckQualityResults"
+    },
+    "CheckQualityResults": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.quality_passed",
+        "BooleanEquals": true,
+        "Next": "PrepareFeatures"
+      }],
+      "Default": "NotifyDataQualityFailure"
+    },
+    "PrepareFeatures": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:feature-engineering",
+      "Next": "StartTrainingJob"
+    },
+    "StartTrainingJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+      "Parameters": {
+        "TrainingJobName.$": "$.training_job_name",
+        "RoleArn": "arn:aws:iam::account:role/SageMakerRole",
+        "AlgorithmSpecification": {
+          "TrainingImage": "account.dkr.ecr.region.amazonaws.com/ml-training:latest",
+          "TrainingInputMode": "File"
+        },
+        "InputDataConfig": [{
+          "ChannelName": "training",
+          "DataSource": {
+            "S3DataSource": {
+              "S3DataType": "S3Prefix",
+              "S3Uri.$": "$.training_data_path"
+            }
+          }
+        }],
+        "OutputDataConfig": {
+          "S3OutputPath.$": "$.model_output_path"
+        },
+        "ResourceConfig": {
+          "InstanceType": "ml.m5.large",
+          "InstanceCount": 1,
+          "VolumeSizeInGB": 30
+        },
+        "StoppingCondition": {
+          "MaxRuntimeInSeconds": 3600
+        },
+        "HyperParameters": {
+          "embedding_dim": "50",
+          "learning_rate": "0.001",
+          "num_epochs": "50"
+        }
+      },
+      "Next": "EvaluateModel"
+    },
+    "EvaluateModel": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:evaluate-model",
+      "Next": "CompareWithProduction"
+    },
+    "CompareWithProduction": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:compare-models",
+      "Next": "CheckIfBetter"
+    },
+    "CheckIfBetter": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.is_better",
+        "BooleanEquals": true,
+        "Next": "RegisterModel"
+      }],
+      "Default": "NotifyNoImprovement"
+    },
+    "RegisterModel": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:register-model",
+      "Next": "CreateModelEndpoint"
+    },
+    "CreateModelEndpoint": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createEndpoint",
+      "Parameters": {
+        "EndpointName.$": "$.endpoint_name",
+        "EndpointConfigName.$": "$.endpoint_config_name"
+      },
+      "Next": "CanaryDeployment"
+    },
+    "CanaryDeployment": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:canary-deployment",
+      "Next": "MonitorCanary"
+    },
+    "MonitorCanary": {
+      "Type": "Wait",
+      "Seconds": 300,
+      "Next": "CheckCanaryMetrics"
+    },
+    "CheckCanaryMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:check-canary-metrics",
+      "Next": "DecideRollout"
+    },
+    "DecideRollout": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.canary_successful",
+        "BooleanEquals": true,
+        "Next": "FullRollout"
+      }],
+      "Default": "RollbackDeployment"
+    },
+    "FullRollout": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:full-rollout",
+      "Next": "NotifySuccess"
+    },
+    "RollbackDeployment": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:region:account:function:rollback-deployment",
+      "Next": "NotifyRollback"
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:region:account:ml-pipeline-notifications",
+        "Subject": "Model Deployment Successful",
+        "Message.$": "$.deployment_summary"
+      },
+      "End": true
+    },
+    "NotifyRollback": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:region:account:ml-pipeline-notifications",
+        "Subject": "Model Deployment Rolled Back",
+        "Message.$": "$.rollback_reason"
+      },
+      "End": true
+    },
+    "NotifyNoImprovement": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:region:account:ml-pipeline-notifications",
+        "Subject": "New Model Did Not Improve Performance",
+        "Message.$": "$.comparison_results"
+      },
+      "End": true
+    },
+    "NotifyDataQualityFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:region:account:ml-pipeline-notifications",
+        "Subject": "Data Quality Check Failed",
+        "Message.$": "$.quality_issues"
+      },
+      "End": true
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:region:account:ml-pipeline-notifications",
+        "Subject": "Pipeline Failed",
+        "Message.$": "$.error"
+      },
+      "End": true
+    }
+  }
+}

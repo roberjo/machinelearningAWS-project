@@ -1,0 +1,81 @@
+name: ML CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      
+      - name: Lint code
+        run: |
+          black --check src/
+          pylint src/
+          flake8 src/ --max-line-length=120
+          mypy src/ --ignore-missing-imports
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=html
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+      
+      - name: Test data generators
+        run: |
+          python src/data_preparation/data_loader.py --test
+          python tests/test_data_generation.py
+      
+      - name: Validate model code
+        run: |
+          python -m py_compile src/models/*.py
+          python -m py_compile src/training/*.py
+      
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v
+      
+      - name: Security scan
+        run: |
+          bandit -r src/
+          safety check
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+      
+      - name: Terraform validation
+        run: |
+          cd terraform/
+          terraform fmt -check -recursive
+          cd environments/dev
+          terraform init -backend=false
+          terraform validate
+      
+      - name: TFSec scan
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform/

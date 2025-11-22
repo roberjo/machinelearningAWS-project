@@ -1,0 +1,67 @@
+name: Model Monitoring
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsMLRole
+          aws-region: us-east-1
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install boto3 pandas numpy scipy scikit-learn
+      
+      - name: Check model performance
+        run: |
+          python src/monitoring/performance_monitor.py \
+            --environment prod \
+            --window-hours 24
+      
+      - name: Detect data drift
+        run: |
+          python src/monitoring/drift_detector.py \
+            --environment prod \
+            --reference-period 30d
+      
+      - name: Check data quality
+        run: |
+          python src/monitoring/data_quality_monitor.py \
+            --environment prod
+      
+      - name: Generate monitoring report
+        run: |
+          python scripts/generate_monitoring_report.py \
+            --output monitoring-report.html
+      
+      - name: Upload report
+        run: |
+          aws s3 cp monitoring-report.html s3://ml-reports-prod/monitoring/$(date +%Y-%m-%d)/
+      
+      - name: Trigger retraining if drift detected
+        run: |
+          if [ -f drift_detected.flag ]; then
+            gh workflow run model-training.yml \
+              --ref main \
+              -f environment=prod
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,8 @@
+pytest
+pytest-cov
+black
+pylint
+flake8
+mypy
+bandit
+safety

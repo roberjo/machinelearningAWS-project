@@ -1,0 +1,121 @@
+name: Model Training Pipeline
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      force_deploy:
+        description: 'Force deployment even if metrics dont improve'
+        type: boolean
+        default: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsMLRole
+          aws-region: us-east-1
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-training.txt
+      
+      - name: Generate training data
+        run: |
+          python scripts/prepare_training_data.py \
+            --environment ${{ github.event.inputs.environment || 'dev' }} \
+            --days-lookback 90
+      
+      - name: Upload data to S3
+        run: |
+          aws s3 sync data/processed/ s3://ml-training-data-${{ github.event.inputs.environment || 'dev' }}/$(date +%Y-%m-%d)/
+      
+      - name: Trigger Step Functions training pipeline
+        id: training
+        run: |
+          EXECUTION_ARN=$(aws stepfunctions start-execution \
+            --state-machine-arn arn:aws:states:us-east-1:${{ secrets.AWS_ACCOUNT_ID }}:stateMachine:ml-training-pipeline-${{ github.event.inputs.environment || 'dev' }} \
+            --input '{"training_job_name": "recommend-model-'$(date +%Y%m%d-%H%M%S)'", "training_data_path": "s3://ml-training-data-'${{ github.event.inputs.environment || 'dev' }}'/'$(date +%Y-%m-%d)'/", "model_output_path": "s3://ml-models-'${{ github.event.inputs.environment || 'dev' }}'/'$(date +%Y-%m-%d)'/" }' \
+            --query 'executionArn' \
+            --output text)
+          
+          echo "execution_arn=$EXECUTION_ARN" >> $GITHUB_OUTPUT
+          echo "Training pipeline started: $EXECUTION_ARN"
+      
+      - name: Wait for training completion
+        run: |
+          python scripts/wait_for_step_functions.py \
+            --execution-arn "${{ steps.training.outputs.execution_arn }}" \
+            --timeout 7200
+      
+      - name: Get training results
+        id: results
+        run: |
+          RESULTS=$(aws stepfunctions describe-execution \
+            --execution-arn "${{ steps.training.outputs.execution_arn }}" \
+            --query 'output' \
+            --output text)
+          
+          echo "$RESULTS" > training_results.json
+          cat training_results.json
+      
+      - name: Comment results on commit
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('training_results.json', 'utf8'));
+            
+            const comment = `## Model Training Results
+            
+            **Status:** ${results.status}
+            **Model Version:** ${results.model_version}
+            
+            ### Metrics
+            - RMSE: ${results.metrics.rmse}
+            - Precision@10: ${results.metrics['precision@10']}
+            - Recall@10: ${results.metrics['recall@10']}
+            - NDCG@10: ${results.metrics['ndcg@10']}
+            
+            ### Comparison with Production
+            ${results.is_better ? '✅ New model performs better' : '❌ No improvement over production model'}
+            `;
+            
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: comment
+            });
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: training-results
+          path: |
+            training_results.json
+            *.png

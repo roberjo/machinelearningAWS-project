@@ -1,0 +1,95 @@
+name: Model Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_version:
+        description: 'Model version to deploy'
+        required: true
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+      deployment_strategy:
+        description: 'Deployment strategy'
+        type: choice
+        options:
+          - canary
+          - blue-green
+          - immediate
+        default: 'canary'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsMLRole
+          aws-region: us-east-1
+      
+      - name: Validate model exists
+        run: |
+          aws s3 ls s3://ml-models-${{ github.event.inputs.environment }}/${{ github.event.inputs.model_version }}/
+      
+      - name: Create SageMaker endpoint config
+        run: |
+          python scripts/create_endpoint_config.py \
+            --model-version ${{ github.event.inputs.model_version }} \
+            --environment ${{ github.event.inputs.environment }} \
+            --strategy ${{ github.event.inputs.deployment_strategy }}
+      
+      - name: Deploy to SageMaker
+        run: |
+          python scripts/deploy_model.py \
+            --model-version ${{ github.event.inputs.model_version }} \
+            --environment ${{ github.event.inputs.environment }} \
+            --strategy ${{ github.event.inputs.deployment_strategy }}
+      
+      - name: Run smoke tests
+        run: |
+          pytest tests/smoke/ --endpoint-name recommend-${{ github.event.inputs.environment }}
+      
+      - name: Monitor deployment
+        if: github.event.inputs.deployment_strategy == 'canary'
+        run: |
+          python scripts/monitor_canary.py \
+            --environment ${{ github.event.inputs.environment }} \
+            --duration-minutes 30
+      
+      - name: Full rollout
+        if: github.event.inputs.deployment_strategy == 'canary'
+        run: |
+          python scripts/complete_rollout.py \
+            --environment ${{ github.event.inputs.environment }}
+      
+      - name: Update model registry
+        run: |
+          python scripts/update_model_registry.py \
+            --model-version ${{ github.event.inputs.model_version }} \
+            --environment ${{ github.event.inputs.environment }} \
+            --status deployed
+      
+      - name: Notify on Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "Model Deployment: ${{ job.status }}",
+              "model_version": "${{ github.event.inputs.model_version }}",
+              "environment": "${{ github.event.inputs.environment }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
