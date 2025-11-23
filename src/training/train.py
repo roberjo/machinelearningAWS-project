@@ -1,24 +1,26 @@
+"""
+Training pipeline for recommendation model.
+"""
+
 import argparse
 import json
+from datetime import datetime
 
 import joblib
-import pandas as pd
 import numpy as np
-
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+import pandas as pd
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from datetime import datetime
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from torch import nn, optim
 
 
 class NeuralCollaborativeFiltering(nn.Module):
     """Neural Collaborative Filtering model"""
 
-    def __init__(
-        self, num_users, num_items, embedding_dim=50, hidden_layers=[128, 64, 32]
-    ):
+    def __init__(self, num_users, num_items, embedding_dim=50, hidden_layers=None):
         super().__init__()
+        if hidden_layers is None:
+            hidden_layers = [128, 64, 32]
 
         # User and item embeddings
         self.user_embedding = nn.Embedding(num_users, embedding_dim)
@@ -37,6 +39,7 @@ class NeuralCollaborativeFiltering(nn.Module):
         self.mlp = nn.Sequential(*layers)
 
     def forward(self, user_ids, item_ids):
+        """Forward pass"""
         user_emb = self.user_embedding(user_ids)
         item_emb = self.item_embedding(item_ids)
         x = torch.cat([user_emb, item_emb], dim=1)
@@ -84,7 +87,9 @@ class RecommenderTrainer:
 
         return interactions, users, products
 
-    def prepare_features(self, interactions, users, products):
+    def prepare_features(
+        self, interactions, users, products
+    ):  # pylint: disable=unused-argument
         """Feature engineering"""
         print("Engineering features...")
 
@@ -137,7 +142,7 @@ class RecommenderTrainer:
 
         return train_data, val_data, test_data
 
-    def train_model(self, train_data, val_data):
+    def train_model(self, train_data, val_data):  # pylint: disable=too-many-locals
         """Train the model"""
         print("Training model...")
 
@@ -262,12 +267,13 @@ class RecommenderTrainer:
         joblib.dump(self.item_id_map, f"{model_path}/item_id_map.pkl")
 
         # Save config
-        with open(f"{model_path}/config.json", "w") as f:
+        with open(f"{model_path}/config.json", "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=2)
 
     def _create_dataloader(self, data, batch_size):
         """Create PyTorch DataLoader"""
-        from torch.utils.data import TensorDataset, DataLoader
+        # pylint: disable=import-outside-toplevel
+        from torch.utils.data import DataLoader, TensorDataset
 
         users = torch.LongTensor(data["user_idx"].values)
         items = torch.LongTensor(data["item_idx"].values)
@@ -276,27 +282,31 @@ class RecommenderTrainer:
         dataset = TensorDataset(users, items, feedback)
         return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    def _calculate_precision_at_k(self, test_data, k=10):
+    def _calculate_precision_at_k(
+        self, test_data, k=10
+    ):  # pylint: disable=unused-argument
         """Calculate Precision@K"""
         # Get top K recommendations for each user
         # Compare with actual purchases in test set
         # Implementation details omitted for brevity
         return 0.0  # Placeholder
 
-    def _calculate_recall_at_k(self, test_data, k=10):
+    def _calculate_recall_at_k(
+        self, test_data, k=10
+    ):  # pylint: disable=unused-argument
         """Calculate Recall@K"""
         return 0.0  # Placeholder
 
-    def _calculate_ndcg_at_k(self, test_data, k=10):
+    def _calculate_ndcg_at_k(self, test_data, k=10):  # pylint: disable=unused-argument
         """Calculate NDCG@K"""
         return 0.0  # Placeholder
 
     def _save_checkpoint(self):
         """Save training checkpoint"""
-        pass
 
 
 def main():
+    """Main training entry point"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, default="/opt/ml/input/data/training")
     parser.add_argument("--model-dir", type=str, default="/opt/ml/model")
@@ -335,7 +345,7 @@ def main():
     trainer.save_model(args.model_dir)
 
     # Save metrics
-    with open(f"{args.output_dir}/metrics.json", "w") as f:
+    with open(f"{args.output_dir}/metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
 
     print("Training completed successfully!")

@@ -1,10 +1,15 @@
-import boto3
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from scipy import stats
+"""
+Drift detection module for ML models.
+"""
+
 import json
 import os
+from datetime import datetime, timedelta
+
+import boto3
+import numpy as np
+import pandas as pd
+from scipy import stats
 
 
 class DriftDetector:
@@ -150,18 +155,20 @@ class DriftDetector:
         return metrics
 
 
-def load_recent_data(days=7):
+def load_recent_data(days=7):  # pylint: disable=unused-argument
+    """Load recent inference data"""
     # Placeholder for loading recent data
     return pd.DataFrame()
 
 
 def load_reference_data():
+    """Load training reference data"""
     # Placeholder for loading reference data
     return pd.DataFrame()
 
 
 # Lambda handler for scheduled monitoring
-def lambda_handler(event, context):
+def lambda_handler(event, context):  # pylint: disable=unused-argument
     """Scheduled monitoring job"""
     detector = DriftDetector()
 

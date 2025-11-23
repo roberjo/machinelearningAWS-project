@@ -1,14 +1,20 @@
-import json
-import boto3
-import joblib
+"""
+Lambda handler for recommendation API.
+"""
 
-import numpy as np
+import json
 import os
 from datetime import datetime
+
+import boto3
+import joblib
+import numpy as np
 
 
 class RecommendationService:
     """Recommendation inference service"""
+
+    # pylint: disable=too-few-public-methods
 
     def __init__(self):
         self.s3 = boto3.client("s3")
@@ -44,7 +50,7 @@ class RecommendationService:
             self.user_id_map = joblib.load("/tmp/user_id_map.pkl")
             self.item_id_map = joblib.load("/tmp/item_id_map.pkl")
             self.reverse_item_map = {v: k for k, v in self.item_id_map.items()}
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"Error loading model: {e}")
 
     def get_recommendations(
@@ -125,7 +131,7 @@ class RecommendationService:
                 ExpressionAttributeValues={":uid": user_id, ":type": "purchase"},
             )
             return {item["product_id"] for item in response["Items"]}
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return set()
 
     def _get_popular_items(self, num_items):
@@ -149,14 +155,16 @@ class RecommendationService:
                 "model_version": "baseline",
                 "inference_time_ms": 0,
             }
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return {
                 "recommendations": [],
                 "model_version": "baseline",
                 "inference_time_ms": 0,
             }
 
-    def _generate_reason(self, user_id, item_id, context):
+    def _generate_reason(
+        self, user_id, item_id, context
+    ):  # pylint: disable=unused-argument
         """Generate explanation for recommendation"""
         reasons = [
             "Based on your recent purchases",
@@ -181,17 +189,17 @@ class RecommendationService:
                     "model_version": os.environ.get("MODEL_VERSION", "latest"),
                 }
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"Failed to log inference: {e}")
 
 
 # Lambda handler
-recommendation_service = None
+recommendation_service = None  # pylint: disable=invalid-name
 
 
-def lambda_handler(event, context):
+def lambda_handler(event, context):  # pylint: disable=unused-argument
     """Main Lambda handler for recommendation API"""
-    global recommendation_service
+    global recommendation_service  # pylint: disable=global-statement
 
     # Initialize service (cached across invocations)
     if recommendation_service is None:
@@ -233,7 +241,7 @@ def lambda_handler(event, context):
             "body": json.dumps(result),
         }
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error: {str(e)}")
         return {
             "statusCode": 500,
