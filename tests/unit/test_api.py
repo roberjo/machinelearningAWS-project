@@ -3,6 +3,7 @@ Unit tests for API and inference modules.
 """
 import pytest
 import json
+import re
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 import sys
@@ -30,7 +31,12 @@ class TestAPIValidation:
             assert isinstance(user_id, str) and len(user_id) > 0
         
         for user_id in invalid_user_ids:
-            is_valid = isinstance(user_id, str) and len(user_id) > 0
+            # Check for string, non-empty, and alphanumeric (plus underscore)
+            is_valid = (
+                isinstance(user_id, str) and 
+                len(user_id) > 0 and 
+                bool(re.match(r'^\w+$', user_id))
+            )
             assert not is_valid
     
     def test_validate_num_recommendations_range(self):

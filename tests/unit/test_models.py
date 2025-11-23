@@ -300,7 +300,7 @@ class TestModelSaving:
         
         # Load
         new_model = nn.Linear(10, 1)
-        new_model.load_state_dict(torch.load(model_path))
+        new_model.load_state_dict(torch.load(model_path, weights_only=True))
         
         # Verify weights are the same
         for p1, p2 in zip(model.parameters(), new_model.parameters()):
@@ -316,7 +316,7 @@ class TestModelSaving:
         assert os.path.exists(model_path)
         
         # Load and verify
-        loaded_model = torch.load(model_path)
+        loaded_model = torch.load(model_path, weights_only=False)
         assert isinstance(loaded_model, nn.Linear)
 
 
